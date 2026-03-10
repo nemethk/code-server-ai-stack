@@ -1,0 +1,16 @@
+# Secrets
+.env
+*.key
+*.pem
+*.crt
+
+# Docker local data
+data/
+logs/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store

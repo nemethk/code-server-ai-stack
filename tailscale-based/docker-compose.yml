@@ -1,0 +1,100 @@
+services:
+
+  # ─────────────────────────────────────────────
+  #  TAILSCALE  –  authentication & network entry point
+  # ─────────────────────────────────────────────
+  # Joins your Tailnet and serves code-server over HTTPS with a valid
+  # Tailscale certificate. No ports exposed to the public internet.
+  # Access URL: https://<TS_HOSTNAME>.<tailnet>.ts.net
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: webai-tailscale
+    restart: unless-stopped
+    hostname: ${TS_HOSTNAME:-webai}
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY:?Set TS_AUTHKEY in .env}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_SERVE_CONFIG=/config/serve.json  # proxy rules: HTTPS → code-server:8080
+      - TS_USERSPACE=false                  # kernel mode (better performance)
+    volumes:
+      - tailscale_state:/var/lib/tailscale          # persist node identity
+      - ./tailscale/serve.json:/config/serve.json:ro
+      - /dev/net/tun:/dev/net/tun                   # required for kernel mode
+    cap_add:
+      - NET_ADMIN    # required to manage the WireGuard interface
+      - SYS_MODULE   # required to load kernel modules (remove if not available)
+    networks:
+      - frontend   # proxies incoming requests to code-server
+      - internet   # connects to Tailscale coordination servers
+
+  # ─────────────────────────────────────────────
+  #  CODE-SERVER  –  VSCode in the browser
+  # ─────────────────────────────────────────────
+  # No published ports — only reachable via Tailscale through the tailscale service.
+  # --auth none: Tailscale handles authentication; network access = authorisation.
+  code-server:
+    build:
+      context: ./code-server
+    container_name: webai-code-server
+    restart: unless-stopped
+    command: ["--auth", "none", "--bind-addr", "0.0.0.0:8080", "."]
+    volumes:
+      - code_server_data:/home/coder
+    networks:
+      - frontend   # reachable from tailscale for proxying
+      - isolated   # outbound only via squid
+    environment:
+      # ── Proxy routing (all outbound via squid) ───────────────────────────────
+      - HTTP_PROXY=http://squid:3128
+      - HTTPS_PROXY=http://squid:3128
+      - http_proxy=http://squid:3128
+      - https_proxy=http://squid:3128
+      - NO_PROXY=localhost,127.0.0.1,squid,tailscale,code-server
+      - no_proxy=localhost,127.0.0.1,squid,tailscale,code-server
+
+      # ── AI CLI API keys ──────────────────────────────────────────────────────
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+    depends_on:
+      - squid
+      - tailscale
+
+  # ─────────────────────────────────────────────
+  #  SQUID  –  outbound filtering proxy
+  # ─────────────────────────────────────────────
+  # The only service with internet access for code-server traffic.
+  # Tailscale has its own direct internet access for coordination.
+  squid:
+    image: ubuntu/squid:latest
+    container_name: webai-squid
+    restart: unless-stopped
+    volumes:
+      - ./squid/squid.conf:/etc/squid/squid.conf:ro
+      - squid_cache:/var/spool/squid
+      - squid_logs:/var/log/squid
+    networks:
+      - isolated   # receives proxy requests from code-server
+      - internet   # routes approved requests to the internet
+
+volumes:
+  tailscale_state:   # persists Tailscale node identity — prevents re-auth on restart
+  code_server_data:  # workspace files + VSCode extensions/settings
+  squid_cache:
+  squid_logs:
+
+networks:
+  # tailscale <-> code-server: no direct internet for code-server
+  frontend:
+    driver: bridge
+    internal: true
+
+  # code-server <-> squid: code-server has no direct internet route
+  isolated:
+    driver: bridge
+    internal: true
+
+  # tailscale + squid: the only containers with internet access
+  internet:
+    driver: bridge
+    internal: false

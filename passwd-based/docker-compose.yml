@@ -1,0 +1,98 @@
+services:
+
+  # ─────────────────────────────────────────────
+  #  NGINX  –  HTTPS termination & reverse proxy
+  # ─────────────────────────────────────────────
+  nginx:
+    build:
+      context: ./nginx
+    container_name: webai-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"    # HTTP → HTTPS redirect only
+      - "443:443"  # HTTPS termination
+    volumes:
+      - nginx_certs:/etc/nginx/certs  # persisted self-signed cert
+    networks:
+      - frontend
+    depends_on:
+      - code-server
+    environment:
+      - DOMAIN=${DOMAIN:-localhost}
+
+  # ─────────────────────────────────────────────
+  #  CODE-SERVER  –  VSCode in the browser
+  # ─────────────────────────────────────────────
+  code-server:
+    build:
+      context: ./code-server
+    container_name: webai-code-server
+    restart: unless-stopped
+    # No published ports – only reachable via nginx on the frontend network
+    volumes:
+      - code_server_data:/home/coder  # workspace + VSCode settings
+    networks:
+      - frontend   # nginx → code-server
+      - isolated   # code-server → squid (proxy)
+    environment:
+      # ── Authentication ──────────────────────────────────────────────────────
+      # HASHED_PASSWORD takes precedence over PASSWORD when both are set.
+      # setup.sh will generate values for both.
+      - HASHED_PASSWORD=${HASHED_PASSWORD:-}
+      - PASSWORD=${CODE_SERVER_PASSWORD:?Set CODE_SERVER_PASSWORD in .env}
+
+      # ── Proxy routing (all outbound via squid) ───────────────────────────────
+      - HTTP_PROXY=http://squid:3128
+      - HTTPS_PROXY=http://squid:3128
+      - http_proxy=http://squid:3128
+      - https_proxy=http://squid:3128
+      # Bypass proxy for Docker-internal hostnames to avoid proxy loops
+      - NO_PROXY=localhost,127.0.0.1,squid,nginx,code-server
+      - no_proxy=localhost,127.0.0.1,squid,nginx,code-server
+
+      # ── AI CLI API keys ──────────────────────────────────────────────────────
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+    depends_on:
+      - squid
+
+  # ─────────────────────────────────────────────
+  #  SQUID  –  outbound filtering proxy
+  # ─────────────────────────────────────────────
+  # Squid is the ONLY service with internet access.
+  # code-server reaches external APIs exclusively through squid.
+  squid:
+    image: ubuntu/squid:latest
+    container_name: webai-squid
+    restart: unless-stopped
+    # No published ports – squid:3128 is only reachable from the isolated network
+    volumes:
+      - ./squid/squid.conf:/etc/squid/squid.conf:ro
+      - squid_cache:/var/spool/squid
+      - squid_logs:/var/log/squid
+    networks:
+      - isolated   # receives proxy requests from code-server
+      - internet   # routes approved requests to the internet
+
+volumes:
+  nginx_certs:       # persisted self-signed TLS certificate
+  code_server_data:  # workspace files + VSCode extensions/settings
+  squid_cache:
+  squid_logs:
+
+networks:
+  # nginx <-> code-server: no internet path whatsoever
+  frontend:
+    driver: bridge
+    internal: true
+
+  # code-server <-> squid: code-server has no direct internet route
+  isolated:
+    driver: bridge
+    internal: true
+
+  # squid -> internet: the only external-capable network
+  internet:
+    driver: bridge
+    internal: false
