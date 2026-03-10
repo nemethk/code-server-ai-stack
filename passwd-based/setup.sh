@@ -51,7 +51,7 @@ prompt_key() {
     val=$(get_env "${key}")
     if [ -z "${val}" ]; then
         read -rp "  ${label} (Enter to skip): " val
-        [ -n "${val}" ] && set_env "${key}" "${val}" && success "  ${key} saved"
+        if [ -n "${val}" ]; then set_env "${key}" "${val}" && success "  ${key} saved"; fi
     else
         info "  ${key} already set"
     fi
@@ -127,6 +127,39 @@ main() {
             success "CLAUDE_CONFIG_DIR set to ${HOME}/.claude"
             # Uncomment the volume mount in compose
             sed -i 's|# - \${CLAUDE_CONFIG_DIR.*|- ${CLAUDE_CONFIG_DIR}:/home/coder/.claude:rw|' \
+                "${SCRIPT_DIR}/docker-compose.yml" 2>/dev/null || true
+        fi
+    fi
+
+    # Optional: Gemini config mount
+    echo ""
+    local gemini_dir
+    gemini_dir=$(get_env "GEMINI_CONFIG_DIR")
+    if [ -z "${gemini_dir}" ]; then
+        read -rp "Mount ~/.gemini for Gemini auth persistence? [y/N]: " yn
+        if [[ "${yn}" =~ ^[Yy]$ ]]; then
+            set_env "GEMINI_CONFIG_DIR" "${HOME}/.gemini"
+            mkdir -p "${HOME}/.gemini"
+            success "GEMINI_CONFIG_DIR set to ${HOME}/.gemini"
+            # Uncomment the volume mount in compose
+            sed -i 's|# - \${GEMINI_CONFIG_DIR.*|- ${GEMINI_CONFIG_DIR}:/home/coder/.gemini:rw|' \
+                "${SCRIPT_DIR}/docker-compose.yml" 2>/dev/null || true
+        fi
+    fi
+
+    # Optional: Codex config mount
+    echo ""
+    local codex_dir
+    codex_dir=$(get_env "CODEX_CONFIG_DIR")
+    if [ -z "${codex_dir}" ]; then
+        read -rp "Mount ~/.codex for Codex auth persistence? [y/N]: " yn
+        if [[ "${yn}" =~ ^[Yy]$ ]]; then
+            set_env "CODEX_CONFIG_DIR" "${HOME}/.codex"
+            mkdir -p "${HOME}/.codex"
+            success "CODEX_CONFIG_DIR set to ${HOME}/.codex"
+            info "  Inside the container, run: codex login --device-auth"
+            # Uncomment the volume mount in compose
+            sed -i 's|# - \${CODEX_CONFIG_DIR.*|- ${CODEX_CONFIG_DIR}:/home/coder/.codex:rw|' \
                 "${SCRIPT_DIR}/docker-compose.yml" 2>/dev/null || true
         fi
     fi

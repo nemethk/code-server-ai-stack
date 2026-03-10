@@ -55,6 +55,8 @@ squid/squid.conf            — domain allowlist, all else denied
 | `OPENAI_API_KEY`       | code-server env| Required; Codex has no OAuth login                 |
 | `GEMINI_API_KEY`       | code-server env| Leave blank to use `gemini auth login` instead     |
 | `CLAUDE_CONFIG_DIR`    | volume mount   | Host path mounted as `/home/coder/.claude:rw`      |
+| `GEMINI_CONFIG_DIR`    | volume mount   | Host path mounted as `/home/coder/.gemini:rw`      |
+| `CODEX_CONFIG_DIR`     | volume mount   | Host path mounted as `/home/coder/.codex:rw`       |
 
 ## AI CLI packages
 
@@ -63,7 +65,7 @@ Installed globally in `code-server/Dockerfile` via `npm install -g`:
 | Binary   | npm package                   | Auth options                          |
 |----------|-------------------------------|---------------------------------------|
 | `claude` | `@anthropic-ai/claude-code`   | `ANTHROPIC_API_KEY` or `claude auth login` |
-| `codex`  | `@openai/codex`               | `OPENAI_API_KEY` only                 |
+| `codex`  | `@openai/codex`               | `OPENAI_API_KEY` or `codex login --device-auth` (ChatGPT subscription) |
 | `gemini` | `@google/gemini-cli`          | `GEMINI_API_KEY` or `gemini auth login` |
 
 Node 20 is installed via NodeSource (`setup_20.x`) because `codercom/code-server` bundles its own internal node which is not on the system PATH.
@@ -74,7 +76,9 @@ Domains in `squid/squid.conf` under the `allowed` ACL:
 
 ```
 .anthropic.com          Claude API + OAuth
+claude.ai               Claude subscription OAuth login
 .openai.com             Codex API
+chatgpt.com             Codex "Sign in with ChatGPT" OAuth
 .googleapis.com         Gemini API, Google OAuth (oauth2.googleapis.com, etc.)
 .google.com             Google OAuth (accounts.google.com)
 registry.npmjs.org      npm registry
@@ -91,6 +95,8 @@ After editing `squid/squid.conf`, apply with:
 ```bash
 docker compose restart squid
 ```
+
+**Squid logging:** `ubuntu/squid` runs as user `proxy` which cannot write to `/dev/stdout`. Logs go to the `squid_logs` volume at `/var/log/squid/`. To view them: `docker compose exec squid tail -f /var/log/squid/access.log`
 
 ## nginx critical settings
 
